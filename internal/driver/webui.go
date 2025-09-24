@@ -95,16 +95,20 @@ type webArgs struct {
 	UnitDefs    []measurement.UnitType
 }
 
-func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, disableBrowser bool) error {
+func NewWebInterface(hostport string, p *profile.Profile, o *plugin.Options) (*plugin.HTTPServerArgs, error) {
+	return newWebInterface(hostport, p, setDefaults(o))
+}
+
+func newWebInterface(hostport string, p *profile.Profile, o *plugin.Options) (*plugin.HTTPServerArgs, error) {
 	host, port, err := getHostAndPort(hostport)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	interactiveMode = true
 	copier := makeProfileCopier(p)
 	ui, err := makeWebInterface(p, copier, o)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for n, c := range pprofCommands {
 		ui.help[n] = c.description
@@ -116,10 +120,6 @@ func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, d
 	ui.help["reset"] = "Show the entire profile"
 	ui.help["save_config"] = "Save current settings"
 
-	server := o.HTTPServer
-	if server == nil {
-		server = defaultWebServer
-	}
 	args := &plugin.HTTPServerArgs{
 		Hostport: net.JoinHostPort(host, strconv.Itoa(port)),
 		Host:     host,
@@ -139,10 +139,21 @@ func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, d
 				w.Header().Set("Content-Disposition", "attachment;filename=profile.pb.gz")
 				p.Write(w)
 			}),
-			// Keep legacy URLs working.
-			"/flamegraph2":   redirectWithQuery("flamegraph", http.StatusMovedPermanently),
-			"/flamegraphold": redirectWithQuery("flamegraph", http.StatusMovedPermanently),
+			// FORK
+			"/dottxt": http.HandlerFunc(ui.dottxt),
 		},
+	}
+	return args, nil
+}
+
+func serveWebInterface(hostport string, p *profile.Profile, o *plugin.Options, disableBrowser bool) error {
+	args, err := newWebInterface(hostport, p, o)
+	if err != nil {
+		return err
+	}
+	server := o.HTTPServer
+	if server == nil {
+		server = defaultWebServer
 	}
 
 	url := "http://" + args.Hostport
@@ -307,6 +318,25 @@ func (ui *webInterface) render(w http.ResponseWriter, req *http.Request, tmpl st
 	}
 	w.Header().Set("Content-Type", "text/html")
 	w.Write(html.Bytes())
+}
+
+// dottxt generates a web page containing the text representation of the dot graph.
+func (ui *webInterface) dottxt(w http.ResponseWriter, req *http.Request) {
+	rpt, errList := ui.makeReport(w, req, []string{"dot"}, nil)
+	if rpt == nil {
+		return // error already reported
+	}
+
+	// Generate dot graph.
+	g, config := report.GetDOT(rpt)
+	legend := config.Labels
+	config.Labels = nil
+	dot := &bytes.Buffer{}
+	graph.ComposeDot(dot, g, &graph.DotAttributes{}, config)
+
+	ui.render(w, req, "plaintext", rpt, errList, legend, webArgs{
+		TextBody: dot.String(),
+	})
 }
 
 // dot generates a web page containing an svg diagram.

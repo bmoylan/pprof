@@ -34,6 +34,14 @@ func PProf(o *Options) error {
 	return internaldriver.PProf(o.internalOptions())
 }
 
+func NewWebInterface(hostport string, p *profile.Profile, o *Options) (*HTTPServerArgs, error) {
+	args, err := internaldriver.NewWebInterface(hostport, p, o.internalOptions())
+	if err != nil {
+		return nil, err
+	}
+	return (*HTTPServerArgs)(args), nil
+}
+
 func (o *Options) internalOptions() *plugin.Options {
 	var obj plugin.ObjTool
 	if o.Obj != nil {
